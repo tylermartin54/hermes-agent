@@ -126,7 +126,7 @@ echo "  (TZ=UTC LANG=C.UTF-8 PYTHONHASHSEED=0; all credential env vars unset)"
 exec "$PYTHON" -m pytest \
   -o "addopts=" \
   -n "$WORKERS" \
-  --timeout=60 \
+  --timeout=30 \
   --timeout-method=thread \
   --ignore=tests/integration \
   --ignore=tests/e2e \
