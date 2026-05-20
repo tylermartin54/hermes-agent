@@ -63,13 +63,25 @@ concurrency:
 
 jobs:
   type-check:
-    # Blocking ty type-check.  Pinned to the same version that ships in
+    # ty type-check.  Pinned to the same version that ships in
     # pyproject.toml [project.optional-dependencies].dev (ty==0.0.21).  ty
     # reads [tool.ty.environment].python-version (= "3.13") and
-    # [tool.ty.rules] from pyproject.toml.  No --exit-zero — exit code
-    # propagates to the required-check gate.  This is the one real gap
-    # vs. lint.yml, which runs ty in advisory --exit-zero diff mode.
-    name: ty check (blocking)
+    # [tool.ty.rules] from pyproject.toml.
+    #
+    # Currently `continue-on-error: true` (Tyler decision γ, 2026-05-18) —
+    # main has ~7428 pre-existing ty diagnostics across 15+ rule classes
+    # (not introduced by this packet). Backlog is reported in every CI run
+    # but does NOT block merges. A follow-up burndown packet
+    # (T2.11-followup-ha-ty-baseline) will tranche these down; a third
+    # packet (T2.11-followup-ha-ty-blocking) will remove this
+    # continue-on-error flag and flip to true blocking once clean.
+    #
+    # The output is still visible in the Actions UI and PR conversation,
+    # so the backlog stays a forcing function for incremental fixes — it
+    # just doesn't halt unrelated hermes-agent feature work in the
+    # meantime.
+    name: ty check (advisory until baseline burndown — Tyler decision γ)
+    continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
