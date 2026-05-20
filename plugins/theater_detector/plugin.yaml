@@ -1,0 +1,8 @@
+name: theater_detector
+version: 0.1.0
+description: "Pre-delivery theater detector — scans every substantive Hermes response for evidence-free claims, filler phrases, hedge language, self-grading, missing ANCHOR CHECK, missing hash on done-claims, manufactured concerns, deferred disagreements, anchor drift, and invented positions. Implements Mechanism 6 (M2.2) of the Hermes-PC Professional Build Protocol — adversarial verification before delivery to the user. Fires via the existing transform_llm_output plugin hook (post-tool-loop, pre-delivery). Returns the response unchanged on PASS; prefixes [VERIFIER FLAGGED: …] on theater detection; supports up to N regeneration cycles before flagging."
+author: "Tyler Martin (Hermes-PC) + Claude Code coding-agent seat"
+hooks:
+  - transform_llm_output
+  - on_session_end
+kind: standalone
