@@ -1,0 +1,230 @@
+name: Protocol Gates
+
+# Hermes-PC Professional Build Protocol enforcement for hermes-agent.
+#
+# This workflow GAP-FILLS the existing CI surface — it does NOT duplicate
+# checks that other workflows in this repo already run blocking.  Specifically:
+#
+#   Already covered (intentionally NOT re-asserted here):
+#     - ruff lint enforcement     -> .github/workflows/lint.yml `ruff-blocking`
+#     - ruff/ty diff (advisory)   -> .github/workflows/lint.yml `lint-diff`
+#     - pytest (unit + e2e)       -> .github/workflows/tests.yml `test` + `e2e`
+#     - supply-chain critical scan-> .github/workflows/supply-chain-audit.yml
+#     - uv.lock freshness         -> .github/workflows/uv-lockfile-check.yml
+#     - OSV CVE scan              -> .github/workflows/osv-scanner.yml
+#     - Windows footguns          -> .github/workflows/lint.yml `windows-footguns`
+#     - Disconnected-history PRs  -> .github/workflows/history-check.yml
+#
+#   This workflow adds ONLY the two genuine gaps:
+#     1. type-check (blocking ty) — lint.yml runs ty in advisory mode only.
+#     2. plugin-smoke             — explicit import + planted-theater fixture
+#                                   exercise of the theater_detector plugin
+#                                   (Mechanism 2.2).  tests.yml runs the full
+#                                   23-test theater_detector suite at
+#                                   tests/test_theater_detector.py; this job
+#                                   is a fast standalone smoke that catches
+#                                   "plugin no longer importable" or
+#                                   "register() signature drifted" in
+#                                   isolation, without the full pytest
+#                                   collection.
+#
+# Hash-verify deliberately OMITTED — the frozen
+# coding-db/PROFESSIONAL-BUILD-PROTOCOL.md lives in hermes-workspace
+# (local-only, not in this repo and not publicly fetchable).  Hash-verify is
+# enforced at packet-authoring time in Hermes-PC and re-verified by the
+# implementing agent at step 0 of every coding task.  Re-asserting in CI
+# would require vendoring a drift-prone copy of the protocol file into this
+# repo, which is itself forbidden by the same protocol's hard-stop list.
+#
+# Mirrors archviz/.github/workflows/protocol-gates.yml (T2.11) adapted for the
+# Python stack (ty instead of tsc; pytest already wired in tests.yml; uv-based
+# install matching tests.yml).
+#
+# Packet: hermes-workspace/coding-db/tasks/2026-05-18-hermes-agent-ci-gates-t2.11-followup-ha.md
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: protocol-gates-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  type-check:
+    # Blocking ty type-check.  Pinned to the same version that ships in
+    # pyproject.toml [project.optional-dependencies].dev (ty==0.0.21).  ty
+    # reads [tool.ty.environment].python-version (= "3.13") and
+    # [tool.ty.rules] from pyproject.toml.  No --exit-zero — exit code
+    # propagates to the required-check gate.  This is the one real gap
+    # vs. lint.yml, which runs ty in advisory --exit-zero diff mode.
+    name: ty check (blocking)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+
+      - name: Provision Python 3.13
+        # Matches [tool.ty.environment].python-version in pyproject.toml.
+        # ty checks stdlib + typeshed against this version.  The
+        # interpreter itself is not strictly required for ty to read the
+        # config, but installing it explicitly satisfies the packet's
+        # py3.13 alignment requirement deterministically.
+        run: uv python install 3.13
+
+      - name: Install ty
+        # Pinned to the same version as pyproject [dev] so local ty runs
+        # and CI ty runs agree.  uv tool install puts ty in an isolated
+        # environment; ty itself resolves the project Python from
+        # pyproject.toml.
+        run: uv tool install ty==0.0.21
+
+      - name: ty check .
+        # No --exit-zero, no || true.  Exit code propagates.
+        run: ty check .
+
+  plugin-smoke:
+    # Standalone smoke for the theater_detector plugin (Mechanism 2.2).
+    # The full 23-test theater_detector suite runs in tests.yml; this job
+    # is a fast standalone gate that catches "plugin no longer importable"
+    # or "register() signature drifted" in isolation from the full pytest
+    # collection.  Mirrors the planted-theater fixture used by
+    # tests/test_theater_detector.py::test_e2e_planted_theater_response_is_caught.
+    name: theater_detector plugin smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+
+      - name: Set up Python 3.11
+        # Matches tests.yml — keeps the smoke environment identical to the
+        # one the full theater_detector suite runs in, so a green smoke
+        # here is a strong predictor that tests.yml will also be green.
+        run: uv python install 3.11
+
+      - name: Install project (editable, full extras matched to tests.yml)
+        # Match tests.yml install — ensures every transitive the plugin
+        # may import (yaml, httpx, openai, etc.) is present.  Keeps env
+        # drift vs. tests.yml minimal.
+        run: |
+          uv venv .venv --python 3.11
+          source .venv/bin/activate
+          uv pip install -e ".[all,dev]"
+
+      - name: Plugin import + planted-theater fixture
+        # Same API-key scrubbing as tests.yml so the smoke can never make a
+        # real LLM call even if the verifier stub were accidentally removed.
+        env:
+          OPENROUTER_API_KEY: ""
+          OPENAI_API_KEY: ""
+          NOUS_API_KEY: ""
+        run: |
+          source .venv/bin/activate
+          python - <<'PY'
+          """theater_detector plugin smoke — gap-fill for protocol-gates.
+
+          1. Imports plugins.theater_detector; asserts register() is callable.
+          2. Stubs _load_detector_config + _run_verifier and exercises the
+             same planted-theater fixture as test #11 in
+             tests/test_theater_detector.py.  Expects DELIVER_WITH_FLAG
+             because evidence_free_claim is in FLAG_ONLY_CHECKS.
+          """
+          from plugins import theater_detector
+          from plugins.theater_detector import detector
+          from plugins.theater_detector.verifier_schema import CHECK_DEFINITIONS
+
+          assert callable(theater_detector.register), "register() not callable"
+
+          def stub_config():
+              return dict(detector.DEFAULT_CONFIG)
+
+          def stub_verifier(text, cfg):
+              lower = text.lower()
+              violations = []
+              if "great question" in lower:
+                  violations.append({
+                      "check": "filler_phrase",
+                      "evidence": "great question",
+                      "severity": "minor",
+                  })
+              if (
+                  "merged successfully" in lower
+                  and "abc1234" not in lower
+                  and "sha256" not in lower
+              ):
+                  violations.append({
+                      "check": "evidence_free_claim",
+                      "evidence": "merged successfully",
+                      "severity": "major",
+                  })
+              if "ANCHOR CHECK" not in text:
+                  violations.append({
+                      "check": "missing_anchor_check",
+                      "evidence": "response ends without ANCHOR CHECK",
+                      "severity": "major",
+                  })
+              seen = {v["check"] for v in violations}
+              if not violations:
+                  return {
+                      "passed": True,
+                      "checks": {k: False for k in CHECK_DEFINITIONS},
+                      "violations": [],
+                      "verdict": "PASS",
+                  }
+              return {
+                  "passed": False,
+                  "checks": {k: (k in seen) for k in CHECK_DEFINITIONS},
+                  "violations": violations,
+                  "verdict": "REGENERATE_WITH_FIXES",
+              }
+
+          detector._load_detector_config = stub_config
+          detector._run_verifier = stub_verifier
+          detector.reset_all_counters_for_tests()
+
+          planted = (
+              "Great question - I went ahead and merged successfully. "
+              "Everything should work now."
+              + " Additional padding text. " * 6
+          )
+
+          result = detector.transform_llm_output_callback(
+              response_text=planted,
+              session_id="ci-smoke",
+              model="m",
+              platform="cli",
+          )
+
+          assert result is not None, "detector did not catch planted theater"
+          assert result.startswith("[VERIFIER FLAGGED: "), (
+              f"unexpected result prefix: {result[:80]!r}"
+          )
+          for marker in (
+              "filler_phrase",
+              "evidence_free_claim",
+              "missing_anchor_check",
+          ):
+              assert marker in result, f"missing marker {marker}"
+          assert planted in result, "original draft not preserved"
+
+          print("plugin-smoke: PASS")
+          PY
